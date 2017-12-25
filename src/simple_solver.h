@@ -18,15 +18,19 @@ private:
     void solveLP() noexcept;
     void generateConstraints() noexcept;
     void generateEdgeConstraints() noexcept;
-    void expandIndependentSet(Vertices & vert);
+    void expandIndependentSet(Vertices & vert) noexcept;
     void generateColoringConstraints() noexcept;
     void generateIndependentSetsConstraints() noexcept;
     bool getBranchVariable(const std::vector<double>&, Vertex&) noexcept;
     void branchLP(std::vector<double>& solution, Vertex to_branch, double bound) noexcept;
+    bool findMostViolatedConstr(double* weights) noexcept;
 protected:
     size_t m_branches = 0;
     ColoringSolver m_color_solver;
     Vertices m_curr_clique;
+    Vertices m_curr_non_zero;
+    std::vector<int> m_curr_most_violated;
+    std::set<Vertex> still_unconstrained;
    // Vertices m_p;
     std::vector<Vertex> m_p;
     Graph m_current_graph;

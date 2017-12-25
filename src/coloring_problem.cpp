@@ -154,12 +154,14 @@ size_t ColoringSolver::solveRlf(const Graph& graph, GraphColoring & out_solution
     while (coloredCount < vertexCount) {
         std::fill(uncoloredNeighborsCount.begin(), uncoloredNeighborsCount.end(), 0);
         colorable = uncolored;
-        while (!colorable.empty()) {
+        while (!colorable.empty()) 
+        {
             for (size_t v1Idx = 0; v1Idx < colorable.size(); ++v1Idx) {
                 Vertex v1 = colorable[v1Idx];
+                const std::vector<uint8_t>& adj = graph.GetAdjacencyMatrixRow(sub_set[v1]);
                 for (size_t v2Idx = v1Idx + 1; v2Idx < colorable.size(); ++v2Idx) {
                     Vertex v2 = colorable[v2Idx];
-                    if (graph.HasEdge(sub_set[v1], sub_set[v2])) {
+                    if (adj[sub_set[v2]]) {
                         ++uncoloredNeighborsCount[v1];
                         ++uncoloredNeighborsCount[v2];
                     }

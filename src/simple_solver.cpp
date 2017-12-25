@@ -26,6 +26,27 @@ std::set<T, CMP, ALLOC> operator + (
 }
 
 
+double product(double* weights, const Vertices& vert)
+{
+    double sum = 0;
+    for (const Vertex& v : vert)
+    {
+        sum += weights[v];
+    }
+    return sum;
+}
+
+double product(double* weights, const std::vector<int>& vert)
+{
+    double sum = 0;
+    for (const Vertex& v : vert)
+    {
+        sum += weights[v];
+    }
+    return sum;
+}
+
+
 bool validateColoring(const Graph& graph, GraphColoring& coloring)
 {
     for (Color c = 0; c < coloring.getColorCount(); ++c) {
@@ -81,6 +102,7 @@ size_t SimpleSolver::solve(const Graph in_graph, Graph& out_solutions)
     for (Vertex v : buf)
     {
         m_p.push_back(v);
+        still_unconstrained.insert(v);
     }
     min_color_num = m_p.size();
     SIZE = m_p.size();
@@ -99,6 +121,7 @@ size_t SimpleSolver::solve(const Graph in_graph, Graph& out_solutions)
 
 void SimpleSolver::addConstraint(const std::vector<double>& constr_coef)
 {
+    NUMROWS++;
     size_t count = 0;
     for (Vertex v = 0; v < constr_coef.size(); ++v)
     {
@@ -115,6 +138,8 @@ void SimpleSolver::addConstraint(const std::vector<double>& constr_coef)
 
 void SimpleSolver::solveLP() noexcept
 {
+    m_curr_non_zero.reserve(m_p.size());
+    m_curr_most_violated.reserve(m_p.size());
     std::vector<Vertex> init;
     init.clear();
     init.reserve(m_p.size());
@@ -128,7 +153,7 @@ void SimpleSolver::solveLP() noexcept
     reduced costs. */
 
     int      solstat;
-    double   objval;
+    double   objval, old_objval;
     std::vector<double> solution;
     std::vector<double> pi;
     std::vector<double> slack;
@@ -144,14 +169,13 @@ void SimpleSolver::solveLP() noexcept
     //CPXsetintparam(env, CPXPARAM_ScreenOutput, CPX_ON);
     //CPXsetintparam(env, CPXPARAM_Read_DataCheck, CPX_DATACHECK_WARN);
     //
-    lp = CPXcreateprob(env, &status, "BnCProb");
+    lp = CPXcreateprob(env, &status, "BnCProblem");
     CPXchgobjsen(env, lp, CPX_MAX);
 
     CPXnewcols(env, lp, SIZE, m_obj.data(), m_lower_bounds.data(), m_upper_bounds.data(), NULL, NULL);
 
     senses.resize(NUMROWS);
     std::generate(senses.begin(), senses.end(), []() { return 'L'; });
-
     size_t NUMNZ = rmatval.size();
     CPXaddrows(env, lp, 0, NUMROWS, NUMNZ, m_main_c.data(), senses.data(), (const int*)rmatbeg.data(),
         (const int*)rmatind.data(), (const double*)rmatval.data(), NULL, NULL);
@@ -159,7 +183,6 @@ void SimpleSolver::solveLP() noexcept
     status = CPXlpopt(env, lp);
     cur_numrows = CPXgetnumrows(env, lp);
     cur_numcols = CPXgetnumcols(env, lp);
-
     solution.resize(cur_numcols);
     slack.resize(cur_numrows);
     dj.resize(cur_numcols);
@@ -171,6 +194,31 @@ void SimpleSolver::solveLP() noexcept
         return;
     }
 
+
+    char single_sence[] = { 'L' };
+    double single_coef[] = { 1.0 };
+    int single_matbeg[] = { 0, 0 };
+    int single_matind[] = { 0 };
+    status = CPXsetintparam(env, CPXPARAM_LPMethod, CPX_ALG_DUAL);
+    while (findMostViolatedConstr(solution.data()))
+    {
+        status = CPXnewrows(env, lp, 1, NULL, NULL, NULL, NULL);
+        status = CPXaddrows(env, lp, 0, 1, m_curr_most_violated.size(), m_main_c.data(), single_sence, single_matbeg,
+            (const int*)m_curr_most_violated.data(), (const double*)m_upper_bounds.data(), NULL, NULL);
+
+
+        NUMROWS++;
+        cur_numrows = CPXgetnumrows(env, lp);
+
+        status = CPXlpopt(env, lp);
+        status = CPXsolution(env, lp, &solstat, &objval, solution.data(), 0, 0, 0);
+
+        //status = CPXwriteprob(env, lp, "myprob.lp", NULL);
+        if (objval <= m_curr_clique.size())
+        {
+            return;
+        }
+    }
     Vertex for_branch;
     if (!getBranchVariable(solution, for_branch))
     {
@@ -196,13 +244,12 @@ void SimpleSolver::generateConstraints() noexcept
 {
     m_lower_bounds.resize(m_p.size(), 0.);
     m_upper_bounds.resize(m_p.size(), 1.);
-    generateColoringConstraints();
     generateIndependentSetsConstraints();
-    generateEdgeConstraints();
+    generateColoringConstraints();
+    //generateEdgeConstraints();
 
     for each (auto& var in m_main_constraints)
     {
-        NUMROWS++;
         addConstraint(var);
     }
     m_main_c.resize(m_main_constraints.size(), 1.);
@@ -230,7 +277,7 @@ void SimpleSolver::generateEdgeConstraints() noexcept
     }
 }
 
-void SimpleSolver::expandIndependentSet(Vertices& vert)
+void SimpleSolver::expandIndependentSet(Vertices& vert) noexcept
 {
     std::set<Vertex> expand = m_current_graph.GetNotNeighbours(*(vert.begin()));
     for (Vertex v : vert)
@@ -269,23 +316,54 @@ void SimpleSolver::generateColoringConstraints() noexcept
         {
             auto & vert_by_col = col.getVerticesByColor(color);
             expandIndependentSet(vert_by_col);
+
+            for (auto v1 : vert_by_col)
+            {
+                auto g = m_current_graph.GetNotNeighbours(v1);
+                for (auto v2 : vert_by_col)
+                {
+                    if (g.find(v2) == g.end() && v2 != v1)
+                        std::cout << "KARAUL!";
+                }
+            }
             if (vert_by_col.size() <= 2)
                 continue;
+
             std::vector<double> constr_coef;
             constr_coef.resize(m_p.size(), 0.);
             for (auto vert : vert_by_col)
             {
+                still_unconstrained.erase(vert);
                 constr_coef[vert] = 1;
                 for (auto vert2 : vert_by_col)
                 {
                     if (vert2 == vert)
                         continue;
-                    if (already_added.find(std::make_pair(vert, vert2)) == already_added.end() && already_added.find(std::make_pair(vert2, vert)) == already_added.end())
-                        already_added.insert(std::make_pair(vert, vert2));
                 }
             }
             m_main_constraints.push_back(std::move(constr_coef));
         }
+    }
+    for (auto it = still_unconstrained.begin(); it != still_unconstrained.end(); ++it)
+    {
+        size_t max_size = 0;
+        size_t max_ind = 0;
+        for (size_t i = 0; i < colorings.size(); ++i)
+        {
+            if (colorings[i].getVerticesByColor(colorings[i].getVertexColor(*it)).size() > max_size)
+            {
+                max_size = colorings[i].getVerticesByColor(colorings[i].getVertexColor(*it)).size();
+                max_ind = i;
+            }
+        }
+        Vertices vert_by_col = colorings[max_ind].getVerticesByColor(colorings[max_ind].getVertexColor(*it));
+        std::vector<double> constr_coef;
+        constr_coef.resize(m_p.size(), 0.);
+        for (auto vert : vert_by_col)
+        {
+            constr_coef[vert] = 1;
+        }
+        m_main_constraints.push_back(std::move(constr_coef));
     }
 }
 
@@ -334,6 +412,7 @@ void SimpleSolver::generateIndependentSetsConstraints() noexcept
         constr_coef.resize(m_p.size(), 0.);
         for (auto vert : greedy_set)
         {
+            still_unconstrained.erase(vert);
             constr_coef[vert] = 1;
             for (auto vert2 : greedy_set)
             {
@@ -368,6 +447,7 @@ void SimpleSolver::branchLP(std::vector<double>& solution, Vertex bvar, double b
 {
     m_branches++;
     int           status = 0;
+    size_t added_in_branch = 0;
     double   objval;
     const char type_B[] = { 'B' };
     const char type_L[] = { 'L' };
@@ -382,6 +462,28 @@ void SimpleSolver::branchLP(std::vector<double>& solution, Vertex bvar, double b
     {
         return;
     }
+
+
+    while (findMostViolatedConstr(solution.data()))
+    {
+
+        status = CPXnewrows(env, lp, 1, NULL, NULL, NULL, NULL);
+        status = CPXaddrows(env, lp, 0, 1, m_curr_most_violated.size(), m_main_c.data(), type_L, (const int*)rmatbeg.data(),
+            (const int*)m_curr_most_violated.data(), (const double*)rmatval.data(), NULL, NULL);
+
+        NUMROWS++;
+        added_in_branch++;
+        status = CPXlpopt(env, lp);
+        status = CPXgetx(env, lp, solution.data(), 0, SIZE - 1);
+        double pr = product(solution.data(), m_curr_most_violated);
+        status = CPXgetobjval(env, lp, &objval);
+        if (objval <= m_curr_clique.size())
+        {
+            status = CPXdelrows(env, lp, NUMROWS - added_in_branch, NUMROWS - 1);
+            return;
+        }
+    }
+
     Vertex for_branch;
     if (!getBranchVariable(solution, for_branch))
     {
@@ -403,7 +505,7 @@ void SimpleSolver::branchLP(std::vector<double>& solution, Vertex bvar, double b
 
     status = CPXchgbds(env, lp, 1, (int*)&for_branch, type_U, normal_bounds+1);
     status = CPXchgbds(env, lp, 1, (int*)&for_branch, type_L, normal_bounds);
-
+    status = CPXdelrows(env, lp, NUMROWS - added_in_branch, NUMROWS - 1);
 }
 
 void SimpleSolver::RunGreedyHeuristic()
@@ -456,4 +558,59 @@ std::vector<Vertex> SimpleSolver::IntersectWithNeighbors(Vertex v, std::vector<V
     return out_P;
 }
 
+bool SimpleSolver::findMostViolatedConstr(double* weights) noexcept
+{
+    m_curr_non_zero.clear();
+    m_curr_most_violated.clear();
+    for (size_t i = 0; i < SIZE; ++i)
+    {
+        if (!almostEqual(weights[i], 0.))
+            m_curr_non_zero.push_back(i);
+    }
+    bool found = false;
+    std::sort(m_curr_non_zero.begin(), m_curr_non_zero.end());
+    GraphColoring rlf_coloring(m_curr_non_zero.size());
+    size_t color_num = m_color_solver.solveRlf(m_current_graph, rlf_coloring, m_curr_non_zero);
 
+    size_t needed_color = 0;
+    double max_size = 1.0;
+    for (size_t color = 0; color < color_num; ++color)
+    {
+        const Vertices& ind_set = rlf_coloring.getVerticesByColor(color);
+        if (ind_set.size() < 2)
+            continue;
+        double pr = product(weights, ind_set);
+
+        double sum = 0;
+        for (const Vertex& v : ind_set)
+        {
+            sum += weights[m_curr_non_zero[v]];
+        }
+        if (sum > max_size)
+        {
+            max_size = pr;
+            needed_color = color;
+            found = true;
+        }
+
+        for (auto v1 : ind_set)
+        {
+            auto g = m_current_graph.GetNotNeighbours(m_curr_non_zero[v1]);
+            for (auto v2 : ind_set)
+            {
+                if (g.find(m_curr_non_zero[v2]) == g.end() && m_curr_non_zero[v2] != m_curr_non_zero[v1])
+                    std::cout << "KARAUL!";
+            }
+        }
+
+    }
+    if (found)
+    {
+        const Vertices& vert= rlf_coloring.getVerticesByColor(needed_color);
+        for (auto v : vert)
+        {
+            m_curr_most_violated.push_back(m_curr_non_zero[v]);
+        }
+    }
+    return found;
+}
