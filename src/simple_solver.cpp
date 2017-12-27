@@ -139,7 +139,7 @@ size_t SimpleSolver::solve(const Graph in_graph, Graph& out_solutions)
     SIZE = m_p.size();
     m_current_graph = in_graph;
     m_current_graph.GenerateNotNeighbours();
-    RunGreedyHeuristic();
+    //RunGreedyHeuristic();
     std::vector<Vertex> init;
     init.clear();
     init.reserve(m_p.size());
@@ -267,7 +267,6 @@ void SimpleSolver::solveLP() noexcept
                     if (almostEqual(solution[v], 1.))
                         m_curr_clique.push_back(v);
                 }
-                return;
             }
         }
     }
@@ -372,7 +371,7 @@ void SimpleSolver::branchLP(std::vector<double>& solution, Vertex bvar, double b
     {
         return;
     }
-    if (std::floor(objval + 0.01) <= m_curr_clique.size())
+    if (std::floor(objval + 2E-10) <= m_curr_clique.size())
     {
         return;
     }
@@ -395,7 +394,7 @@ void SimpleSolver::branchLP(std::vector<double>& solution, Vertex bvar, double b
         {
             return;
         }
-        if (std::floor(objval + 0.01) <= m_curr_clique.size())
+        if (std::floor(objval + 2E-10) <= m_curr_clique.size())
         {
             //status = CPXdelrows(env, lp, NUMROWS - added_in_branch, NUMROWS - 1);
             return;
@@ -413,7 +412,6 @@ void SimpleSolver::branchLP(std::vector<double>& solution, Vertex bvar, double b
                         m_curr_clique.push_back(v);
                 }
                 //status = CPXdelrows(env, lp, NUMROWS - added_in_branch, NUMROWS - 1);
-                return;
             }
         }
     }
@@ -426,6 +424,16 @@ void SimpleSolver::branchLP(std::vector<double>& solution, Vertex bvar, double b
             for_branch = i;
         if (solution[i] + my_epsilon < 1. && solution[for_branch] + my_epsilon < solution[i])
             for_branch = i;
+    }
+    if (currently_branched.find(for_branch) != currently_branched.end())
+    {
+        for (uint32_t i = 0; i < m_p.size(); i++)
+        {
+            if (solution[for_branch] + my_epsilon > 1.)
+                for_branch = i;
+            if (solution[i] + my_epsilon < 1. && solution[for_branch] + my_epsilon < solution[i])
+                for_branch = i;
+        }
     }
 
     currently_branched.insert(for_branch);
