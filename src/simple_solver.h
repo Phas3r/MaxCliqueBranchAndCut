@@ -31,6 +31,7 @@ protected:
     Vertices m_curr_non_zero;
     std::vector<int> m_curr_most_violated;
     std::set<Vertex> still_unconstrained;
+    std::set<Vertex> currently_branched;
    // Vertices m_p;
     std::vector<Vertex> m_p;
     Graph m_current_graph;
@@ -56,6 +57,7 @@ protected:
     //Cplex LP problem
     CPXLPptr      lp = NULL;
 
+    double   objval, old_objval;
     //array of ones
     std::vector<double> m_main_c;
     std::set<std::pair<Vertex, Vertex> >already_added;

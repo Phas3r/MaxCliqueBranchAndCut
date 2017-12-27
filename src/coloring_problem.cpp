@@ -46,8 +46,8 @@ void GraphColoring::clear()
     mColorCount = 0;
 }
 
-const size_t iterationsNeeded = 300;
-const size_t numSoultionsNeeded = 35;
+const size_t iterationsNeeded = 10;
+const size_t numSoultionsNeeded = 15;
 
 size_t ColoringSolver::solve(const Graph& graph, std::vector<GraphColoring>& out_solutions)
 {

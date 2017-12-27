@@ -60,7 +60,7 @@ int main(int argc, char* argv[])
     Graph in_graph = readDimacs(argv[1]);
     Graph out_graph(in_graph.GetVertexCount());
     // only use this for debug
-    StartCheck(in_graph);
+    //StartCheck(in_graph);
     
     SimpleSolver solver;
 
@@ -73,7 +73,7 @@ int main(int argc, char* argv[])
     // integral duration: requires duration_cast
     auto int_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1);
     
-    std::cout << "Program took " << int_ms.count() << " whole milliseconds\n";
+    //std::cout << "Program took " << int_ms.count() << " whole milliseconds\n";
     cout << clique.size() << endl;
     std::sort(clique.begin(), clique.end());
     for (auto vertex : clique)

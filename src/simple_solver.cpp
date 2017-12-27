@@ -4,6 +4,13 @@
 #include <set>
 #include <cassert>
 
+
+const char type_B[] = { 'B' };
+const char type_L[] = { 'L' };
+const char type_U[] = { 'U' };
+double normal_bounds[2] = { 0., 1. };
+size_t unsuccessfull_runs = 0;
+double my_epsilon = 2E-15;
 // Overloading operators for set intersections and unions
 template <class T, class CMP = std::less<T>, class ALLOC = std::allocator<T> >
 std::set<T, CMP, ALLOC> operator * (
@@ -70,17 +77,22 @@ bool validateColoring(const Graph& graph, GraphColoring& coloring)
     return true;
 }
 
-void checkClique(Vertices & c, const Graph& g)
+bool checkClique(Vertices & c, const Graph& g, bool scream = true)
 {
     for (auto v : c)
     {
         for (auto v2 : c)
         {
             if (v2 != v && !g.HasEdge(v, v2))
-                std::cout << "UJAS!"<<std::endl;
+            {
+                if (scream)
+                    std::cout << "UJAS!" << std::endl;
+                return false;
+            }
         }
 
     }
+    return true;
 }
 
 static bool almostEqual(double x, double y)
@@ -93,6 +105,25 @@ static bool almostEqual(double x, double y)
 static bool isIntegerVar(double var)
 {
     return almostEqual(var, 1.) || almostEqual(var, 0.);
+}
+
+static bool areIntegers(Vertices & c, double * weights)
+{
+    for (Vertex v : c)
+    {
+        if (!almostEqual(weights[v], 1.) && !almostEqual(weights[v], 0.))
+            return false;
+    }
+    return true;
+}
+static void removeNonOnes(Vertices & c, double * weights)
+{
+    std::remove_if(c.begin(), c.end(), [&weights](Vertex v) { return !almostEqual(weights[v], 1.);  });
+}
+
+static bool hasNegative(std::vector<double> vec)
+{
+    return std::find_if(vec.begin(), vec.end(), [](double d) { return (d +0.01< 0.0); }) != vec.end();
 }
 
 size_t SimpleSolver::solve(const Graph in_graph, Graph& out_solutions)
@@ -114,7 +145,7 @@ size_t SimpleSolver::solve(const Graph in_graph, Graph& out_solutions)
     init.reserve(m_p.size());
     //findClique(init.data(), init.size(), buf.data(), buf.size());
     solveLP();
-    checkClique(m_curr_clique, in_graph);
+    checkClique(m_curr_clique, in_graph, true);
     out_solutions.SetVertexSet(m_curr_clique);
     return m_curr_clique.size();
 }
@@ -153,7 +184,6 @@ void SimpleSolver::solveLP() noexcept
     reduced costs. */
 
     int      solstat;
-    double   objval, old_objval;
     std::vector<double> solution;
     std::vector<double> pi;
     std::vector<double> slack;
@@ -194,14 +224,14 @@ void SimpleSolver::solveLP() noexcept
         return;
     }
 
-
     char single_sence[] = { 'L' };
     double single_coef[] = { 1.0 };
     int single_matbeg[] = { 0, 0 };
     int single_matind[] = { 0 };
-    status = CPXsetintparam(env, CPXPARAM_LPMethod, CPX_ALG_DUAL);
+    unsuccessfull_runs = 0;
     while (findMostViolatedConstr(solution.data()))
     {
+        old_objval = objval;
         status = CPXnewrows(env, lp, 1, NULL, NULL, NULL, NULL);
         status = CPXaddrows(env, lp, 0, 1, m_curr_most_violated.size(), m_main_c.data(), single_sence, single_matbeg,
             (const int*)m_curr_most_violated.data(), (const double*)m_upper_bounds.data(), NULL, NULL);
@@ -218,26 +248,51 @@ void SimpleSolver::solveLP() noexcept
         {
             return;
         }
-    }
-    Vertex for_branch;
-    if (!getBranchVariable(solution, for_branch))
-    {
-        // all variables are integer, update clique
-        m_curr_clique.clear();
-        for (Vertex v : m_p)
+
+        if (std::abs(objval - old_objval) < 0.1)
+            unsuccessfull_runs++;
+        else
+            unsuccessfull_runs = 0;
+        if (unsuccessfull_runs >= 5)
+            break;
+
+
+        if (areIntegers(m_curr_non_zero, solution.data()))
         {
-            if (almostEqual(solution[v], 1.))
+            if (checkClique(m_curr_non_zero, m_current_graph, false))
             {
-                m_curr_clique.push_back(v);
+                m_curr_clique.clear();
+                for (Vertex v : m_p)
+                {
+                    if (almostEqual(solution[v], 1.))
+                        m_curr_clique.push_back(v);
+                }
+                return;
             }
         }
-        return;
     }
+    Vertex for_branch;
+   
+
+    //uint32_t nearest_to_one_var = 0;
+    for_branch = 0;
+    for (uint32_t i = 0; i < m_p.size(); i++)
+    {
+        if (solution[for_branch] + 2.E-15 > 1.)
+            for_branch = i;
+        if (solution[i] + 2.E-15 < 1. && solution[for_branch] + 2.E-15 < solution[i])
+            for_branch = i;
+    }
+
+    currently_branched.insert(for_branch);
+
+
     //branch = 1
     branchLP(solution, for_branch, 1.);
 
     //branch = 0
     branchLP(solution, for_branch, 0.);
+    currently_branched.erase(for_branch);
 }
 
 void SimpleSolver::generateConstraints() noexcept
@@ -301,6 +356,93 @@ void SimpleSolver::expandIndependentSet(Vertices& vert) noexcept
         vert.push_back(v_max);
     }    
 }
+
+void SimpleSolver::branchLP(std::vector<double>& solution, Vertex bvar, double bound) noexcept
+{
+    m_branches++;
+    int           status = 0;
+    size_t added_in_branch = 0;
+
+    int      solstat;
+    status = CPXchgbds(env, lp, 1, (int*)&bvar, type_B, &bound);
+
+    status = CPXlpopt(env, lp);
+    status = CPXsolution(env, lp, &solstat, &objval, solution.data(), 0, 0, 0);
+    if (solstat != 1)
+    {
+        return;
+    }
+    if (std::floor(objval + 0.01) <= m_curr_clique.size())
+    {
+        return;
+    }
+
+
+    for (unsuccessfull_runs = 0; unsuccessfull_runs < 3;)
+    {
+        findMostViolatedConstr(solution.data());
+        old_objval = objval;
+        status = CPXaddrows(env, lp, 0, 1, m_curr_most_violated.size(), m_main_c.data(), type_L, (const int*)rmatbeg.data(),
+            (const int*)m_curr_most_violated.data(), (const double*)rmatval.data(), NULL, NULL);
+
+        NUMROWS++;
+        added_in_branch++;
+        status = CPXlpopt(env, lp);
+
+        status = CPXsolution(env, lp, &solstat, &objval, solution.data(), 0, 0, 0);
+        //status = CPXwriteprob(env, lp, "myprob.lp", NULL);
+        if (solstat != 1)
+        {
+            return;
+        }
+        if (std::floor(objval + 0.01) <= m_curr_clique.size())
+        {
+            //status = CPXdelrows(env, lp, NUMROWS - added_in_branch, NUMROWS - 1);
+            return;
+        }
+        if (std::abs(objval - old_objval) < 0.01)
+            unsuccessfull_runs++;
+        if (areIntegers(m_curr_non_zero, solution.data()))
+        {
+            if (checkClique(m_curr_non_zero, m_current_graph, false))
+            {
+                m_curr_clique.clear();
+                for (Vertex v : m_p)
+                {
+                    if (almostEqual(solution[v], 1.))
+                        m_curr_clique.push_back(v);
+                }
+                //status = CPXdelrows(env, lp, NUMROWS - added_in_branch, NUMROWS - 1);
+                return;
+            }
+        }
+    }
+
+
+    Vertex for_branch = 0;
+    for (uint32_t i = 0; i < m_p.size(); i++)
+    {
+        if (solution[for_branch] + my_epsilon > 1.)
+            for_branch = i;
+        if (solution[i] + my_epsilon < 1. && solution[for_branch] + my_epsilon < solution[i])
+            for_branch = i;
+    }
+
+    currently_branched.insert(for_branch);
+    //branch = 1
+    branchLP(solution, for_branch, 1.);
+
+    //branch = 0
+    branchLP(solution, for_branch, 0.);
+
+    currently_branched.erase(for_branch);
+
+    status = CPXchgbds(env, lp, 1, (int*)&for_branch, type_U, normal_bounds + 1);
+    status = CPXchgbds(env, lp, 1, (int*)&for_branch, type_L, normal_bounds);
+    //status = CPXdelrows(env, lp, NUMROWS - added_in_branch, NUMROWS - 1);
+}
+
+
 
 void SimpleSolver::generateColoringConstraints() noexcept
 {
@@ -428,12 +570,12 @@ void SimpleSolver::generateIndependentSetsConstraints() noexcept
 
 bool SimpleSolver::getBranchVariable(const std::vector<double>& solution, Vertex & branch_var) noexcept
 {
-    double max_val = 0.0;
+    double max_val = 2 * std::numeric_limits<double>::epsilon();
     bool found = false;
     branch_var = 0;
-    for (Vertex& v : m_p)
+    for (Vertex& v : m_curr_non_zero)
     {
-        if (!isIntegerVar(solution[v]) && solution[v] > max_val - std::numeric_limits<double>::epsilon())
+        if ((solution[v] + std::numeric_limits<double>::epsilon()) > max_val)
         {
             branch_var = v;
             max_val = solution[v];
@@ -441,71 +583,6 @@ bool SimpleSolver::getBranchVariable(const std::vector<double>& solution, Vertex
         }
     }
     return found;
-}
-
-void SimpleSolver::branchLP(std::vector<double>& solution, Vertex bvar, double bound) noexcept
-{
-    m_branches++;
-    int           status = 0;
-    size_t added_in_branch = 0;
-    double   objval;
-    const char type_B[] = { 'B' };
-    const char type_L[] = { 'L' };
-    const char type_U[] = { 'U' };
-    double normal_bounds[2] = { 0., 1. };
-    status = CPXchgbds(env, lp, 1, (int*)&bvar, type_B, &bound);
-
-    status = CPXlpopt(env, lp);
-    CPXgetx(env, lp, solution.data(), 0, SIZE - 1);
-    CPXgetobjval(env, lp, &objval);
-    if (objval <= m_curr_clique.size())
-    {
-        return;
-    }
-
-
-    while (findMostViolatedConstr(solution.data()))
-    {
-
-        status = CPXnewrows(env, lp, 1, NULL, NULL, NULL, NULL);
-        status = CPXaddrows(env, lp, 0, 1, m_curr_most_violated.size(), m_main_c.data(), type_L, (const int*)rmatbeg.data(),
-            (const int*)m_curr_most_violated.data(), (const double*)rmatval.data(), NULL, NULL);
-
-        NUMROWS++;
-        added_in_branch++;
-        status = CPXlpopt(env, lp);
-        status = CPXgetx(env, lp, solution.data(), 0, SIZE - 1);
-        double pr = product(solution.data(), m_curr_most_violated);
-        status = CPXgetobjval(env, lp, &objval);
-        if (objval <= m_curr_clique.size())
-        {
-            status = CPXdelrows(env, lp, NUMROWS - added_in_branch, NUMROWS - 1);
-            return;
-        }
-    }
-
-    Vertex for_branch;
-    if (!getBranchVariable(solution, for_branch))
-    {
-        // all variables are integer, update clique
-        m_curr_clique.clear();
-        for (Vertex v : m_p)
-        {
-            if (almostEqual(solution[v], 1.))
-                m_curr_clique.push_back(v);
-        }
-        return;
-    }
-    //branch = 1
-    branchLP(solution, for_branch, 1.);
-
-    //branch = 0
-    branchLP(solution, for_branch, 0.);
-
-
-    status = CPXchgbds(env, lp, 1, (int*)&for_branch, type_U, normal_bounds+1);
-    status = CPXchgbds(env, lp, 1, (int*)&for_branch, type_L, normal_bounds);
-    status = CPXdelrows(env, lp, NUMROWS - added_in_branch, NUMROWS - 1);
 }
 
 void SimpleSolver::RunGreedyHeuristic()
@@ -579,7 +656,6 @@ bool SimpleSolver::findMostViolatedConstr(double* weights) noexcept
         const Vertices& ind_set = rlf_coloring.getVerticesByColor(color);
         if (ind_set.size() < 2)
             continue;
-        double pr = product(weights, ind_set);
 
         double sum = 0;
         for (const Vertex& v : ind_set)
@@ -588,19 +664,9 @@ bool SimpleSolver::findMostViolatedConstr(double* weights) noexcept
         }
         if (sum > max_size)
         {
-            max_size = pr;
+            max_size = sum;
             needed_color = color;
             found = true;
-        }
-
-        for (auto v1 : ind_set)
-        {
-            auto g = m_current_graph.GetNotNeighbours(m_curr_non_zero[v1]);
-            for (auto v2 : ind_set)
-            {
-                if (g.find(m_curr_non_zero[v2]) == g.end() && m_curr_non_zero[v2] != m_curr_non_zero[v1])
-                    std::cout << "KARAUL!";
-            }
         }
 
     }
