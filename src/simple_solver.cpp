@@ -4,7 +4,7 @@
 #include <set>
 #include <cassert>
 
-
+std::set<Vertex> true_clique;
 const char type_B[] = { 'B' };
 const char type_L[] = { 'L' };
 const char type_U[] = { 'U' };
@@ -266,15 +266,13 @@ void SimpleSolver::solveLP() noexcept
                     if (almostEqual(solution[v], 1.))
                         m_curr_clique.push_back(v);
                 }
+                return;
             }
         }
     }
     Vertex for_branch;
-   
-
-    //uint32_t nearest_to_one_var = 0;
     for_branch = 0;
-    for (uint32_t i = 0; i < m_p.size(); i++)
+    for (Vertex i = 0; i < m_p.size(); i++)
     {
         if (solution[for_branch] + 2.E-15 > 1.)
             for_branch = i;
@@ -352,7 +350,8 @@ void SimpleSolver::expandIndependentSet(Vertices& vert) noexcept
         }
         expand = expand*m_current_graph.GetNotNeighbours(v_max);
         vert.push_back(v_max);
-    }    
+    }
+
 }
 
 void SimpleSolver::branchLP(std::vector<double>& solution, Vertex bvar, double bound) noexcept
@@ -370,15 +369,36 @@ void SimpleSolver::branchLP(std::vector<double>& solution, Vertex bvar, double b
     {
         return;
     }
-    if (std::floor(objval + 2E-10) <= m_curr_clique.size())
+    if (std::floor(objval + 0.01) <= m_curr_clique.size())
     {
         return;
     }
-
+    m_curr_non_zero.clear();
+    m_curr_most_violated.clear();
+    for (size_t i = 0; i < SIZE; ++i)
+    {
+        if (!almostEqual(solution[i], 0.))
+            m_curr_non_zero.push_back(i);
+    }
+    if (areIntegers(m_curr_non_zero, solution.data()))
+    {
+        if (checkClique(m_curr_non_zero, m_current_graph, false))
+        {
+            m_curr_clique.clear();
+            for (Vertex v : m_p)
+            {
+                if (almostEqual(solution[v], 1.))
+                    m_curr_clique.push_back(v);
+            }
+            //status = CPXdelrows(env, lp, NUMROWS - added_in_branch, NUMROWS - 1);
+            return;
+        }
+    }
 
     for (unsuccessfull_runs = 0; unsuccessfull_runs < 3;)
     {
-        findMostViolatedConstr(solution.data());
+        if (!findMostViolatedConstr(solution.data()))
+            break;
         old_objval = objval;
         status = CPXaddrows(env, lp, 0, 1, m_curr_most_violated.size(), m_main_c.data(), type_L, (const int*)rmatbeg.data(),
             (const int*)m_curr_most_violated.data(), (const double*)rmatval.data(), NULL, NULL);
@@ -388,12 +408,13 @@ void SimpleSolver::branchLP(std::vector<double>& solution, Vertex bvar, double b
         status = CPXlpopt(env, lp);
 
         status = CPXsolution(env, lp, &solstat, &objval, solution.data(), 0, 0, 0);
-        //status = CPXwriteprob(env, lp, "myprob.lp", NULL);
+        if (objval > 900)
+            status = CPXwriteprob(env, lp, "myprob.lp", NULL);
         if (solstat != 1)
         {
             return;
         }
-        if (std::floor(objval + 2E-10) <= m_curr_clique.size())
+        if (std::floor(objval + 0.01) <= m_curr_clique.size())
         {
             //status = CPXdelrows(env, lp, NUMROWS - added_in_branch, NUMROWS - 1);
             return;
@@ -411,30 +432,34 @@ void SimpleSolver::branchLP(std::vector<double>& solution, Vertex bvar, double b
                         m_curr_clique.push_back(v);
                 }
                 //status = CPXdelrows(env, lp, NUMROWS - added_in_branch, NUMROWS - 1);
+                return;
             }
         }
     }
 
-
     Vertex for_branch = 0;
-    for (uint32_t i = 0; i < m_p.size(); i++)
+    for (Vertex i = 0; i < m_p.size(); i++)
     {
         if (solution[for_branch] + my_epsilon > 1.)
             for_branch = i;
         if (solution[i] + my_epsilon < 1. && solution[for_branch] + my_epsilon < solution[i])
             for_branch = i;
     }
-    if (currently_branched.find(for_branch) != currently_branched.end())
+
+    if (currently_branched.find(for_branch)!= currently_branched.end())
     {
-        for (uint32_t i = 0; i < m_p.size(); i++)
+        double curr_var_weight = 0;
+        for (Vertex i = 0; i < m_p.size(); i++)
         {
-            if (solution[for_branch] + my_epsilon > 1.)
+            if (curr_var_weight + my_epsilon < solution[i] && currently_branched.find(i) == currently_branched.end())
+            {
                 for_branch = i;
-            if (solution[i] + my_epsilon < 1. && solution[for_branch] + my_epsilon < solution[i])
-                for_branch = i;
+                curr_var_weight = solution[i];
+            }
         }
     }
-
+    if (currently_branched.find(for_branch) != currently_branched.end())
+        return;
     currently_branched.insert(for_branch);
     //branch = 1
     branchLP(solution, for_branch, 1.);
@@ -464,6 +489,7 @@ void SimpleSolver::generateColoringConstraints() noexcept
         for (size_t color = 0; color < col_num; ++color)
         {
             auto & vert_by_col = col.getVerticesByColor(color);
+
             expandIndependentSet(vert_by_col);
 
             for (auto v1 : vert_by_col)
@@ -538,7 +564,8 @@ void SimpleSolver::generateIndependentSetsConstraints() noexcept
             size_t max_size = 0;
             for (auto v : expand)
             {
-                candidate = expand*m_current_graph.GetNotNeighbours(v);
+                auto guano = m_current_graph.GetNotNeighbours(v);
+                candidate = (expand*guano);
                 if (candidate.size() > max_size)
                 {
                     max_size = candidate.size();
@@ -548,7 +575,7 @@ void SimpleSolver::generateIndependentSetsConstraints() noexcept
             curr_set.insert(v_max);
             candidates.erase(candidates.find(v_max));
             ordered_vert.erase(std::find(ordered_vert.begin(), ordered_vert.end(), v_max));
-            expand = expand*candidate*candidates;
+            expand = (expand*m_current_graph.GetNotNeighbours(v_max))*candidates;
         }
         if (curr_set.size() > 2)
             greedy_ind_sets.push_back(curr_set);
@@ -557,6 +584,7 @@ void SimpleSolver::generateIndependentSetsConstraints() noexcept
 
     for (auto& greedy_set : greedy_ind_sets)
     {
+
         std::vector<double> constr_coef;
         constr_coef.resize(m_p.size(), 0.);
         for (auto vert : greedy_set)
@@ -683,7 +711,7 @@ bool SimpleSolver::findMostViolatedConstr(double* weights) noexcept
         for (auto v : vert)
         {
             m_curr_most_violated.push_back(m_curr_non_zero[v]);
-        }
+        }        
     }
     return found;
 }
