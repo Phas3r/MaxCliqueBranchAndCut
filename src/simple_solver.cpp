@@ -227,7 +227,6 @@ void SimpleSolver::solveLP() noexcept
     char single_sence[] = { 'L' };
     double single_coef[] = { 1.0 };
     int single_matbeg[] = { 0, 0 };
-    int single_matind[] = { 0 };
     unsuccessfull_runs = 0;
     while (findMostViolatedConstr(solution.data()))
     {

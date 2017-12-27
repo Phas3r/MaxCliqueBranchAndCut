@@ -59,6 +59,7 @@ int main(int argc, char* argv[])
     StartTimeoutWatchdog(timeout);;
     Graph in_graph = readDimacs(argv[1]);
     Graph out_graph(in_graph.GetVertexCount());
+
     // only use this for debug
     //StartCheck(in_graph);
     
