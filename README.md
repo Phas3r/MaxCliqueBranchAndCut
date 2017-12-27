@@ -28,7 +28,7 @@ c-fat500-10.clq|500|46627|126|2223
 hamming6-2.clq|64|1824|32|5
 hamming6-4.clq|64|704|4|20
 hamming8-4.clq|256|20864|16|981
-johnson8-2-4.clq|28|210|4|0
+johnson8-2-4.clq|28|210|3|0
 johnson8-4-4.clq|70|1855|14|18
 johnson16-2-4.clq|120|5460|8|33
 MANN_a9.clq|45|918|16|20
