@@ -139,7 +139,7 @@ size_t SimpleSolver::solve(const Graph in_graph, Graph& out_solutions)
     SIZE = m_p.size();
     m_current_graph = in_graph;
     m_current_graph.GenerateNotNeighbours();
-    //RunGreedyHeuristic();
+    RunGreedyHeuristic();
     std::vector<Vertex> init;
     init.clear();
     init.reserve(m_p.size());
