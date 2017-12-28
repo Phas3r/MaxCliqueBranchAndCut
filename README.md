@@ -17,7 +17,7 @@ Default timeout is 0
 Graph name|#Nodes|#Edges|Found clique size|Time (ms)
 ---|---|---|---|---
 brock200_2.clq|200|9876|12|2839031
-brock200_4.clq|200|13089|21|1897371
+brock200_4.clq|200|13089|17|1897371
 c-fat200-1.clq|200|1534|12|1120
 c-fat200-2.clq|200|3235|24|552
 c-fat200-5.clq|200|8473|58|1252
